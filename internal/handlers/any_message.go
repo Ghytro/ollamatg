@@ -86,7 +86,7 @@ func (h *AnyHandler) callOllamaApi(ctx context.Context, prompt string) (neuralRe
 	}
 
 	// ретраим пока не получим устраивающий нас ответ
-	const maxRetries = 1
+	const maxRetries = 3
 	if _, err := lo.Attempt(maxRetries, func(index int) error {
 		result, err := h.neuralProvider.Prompt(ctx, req)
 		if err != nil {
