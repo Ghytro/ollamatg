@@ -2,15 +2,18 @@ package main
 
 import (
 	"context"
+	"grishabot/internal/config"
 	"grishabot/internal/handlers"
 	"grishabot/internal/ollama"
+	"grishabot/internal/tenor"
 	"log"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func main() {
-	bot, err := tgbotapi.NewBotAPI("919910748:AAEYlyLMpywKlgnixu0yBsX7B_vamg5vlDA")
+	config := config.FromEnv()
+	bot, err := tgbotapi.NewBotAPI(config.TgBotToken)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -25,10 +28,11 @@ func main() {
 	updates := bot.GetUpdatesChan(u)
 
 	ollamaApi := ollama.NewApi("http://localhost:11434")
-	hands := handlers.NewAnyHandler(ollamaApi)
+	tenorApi := tenor.NewApi()
+	hands := handlers.NewAnyHandler(ollamaApi, tenorApi)
 
 	for update := range updates {
-		if update.Message != nil { // If we got a message
+		if update.Message != nil {
 			go func() {
 				response, err := hands.Handle(context.Background(), update.Message)
 				if err != nil {
@@ -38,11 +42,25 @@ func main() {
 					return
 				}
 
-				// response := "я пидор"
-				response.ReplyToMessageID = update.Message.MessageID
+				response = setReplyToMsgId(response, update.Message.MessageID)
 
 				bot.Send(response)
 			}()
 		}
 	}
+}
+
+// setReplyToMsgId оч противоречивый метод. С одной стороны с логики
+// должен возвращаться какой то своего внутреннего типа респонс. С другой стороны
+// шо то хня шо это хня писать либо ифы с type-assert либо интерфейс+обертка с сеттером
+func setReplyToMsgId(chattable tgbotapi.Chattable, replyMsgId int) tgbotapi.Chattable {
+	if textReply, ok := chattable.(tgbotapi.MessageConfig); ok {
+		textReply.ReplyToMessageID = replyMsgId
+		return textReply
+	}
+	if animationReply, ok := chattable.(tgbotapi.AnimationConfig); ok {
+		animationReply.ReplyToMessageID = replyMsgId
+		return animationReply
+	}
+	return chattable
 }

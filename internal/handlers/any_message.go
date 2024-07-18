@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"grishabot/internal/ollama"
+	"grishabot/internal/tenor"
 	"log"
 	"math/rand"
 	"strings"
@@ -16,17 +17,19 @@ import (
 
 type AnyHandler struct {
 	neuralProvider *ollama.API
+	gifProvider    *tenor.API
 	neuralSema     *semaphore.Weighted
 }
 
-func NewAnyHandler(api *ollama.API) *AnyHandler {
+func NewAnyHandler(neuralApi *ollama.API, gifApi *tenor.API) *AnyHandler {
 	return &AnyHandler{
-		neuralProvider: api,
+		neuralProvider: neuralApi,
+		gifProvider:    gifApi,
 		neuralSema:     semaphore.NewWeighted(3),
 	}
 }
 
-func (h *AnyHandler) Handle(ctx context.Context, msg *tgbotapi.Message) (reply *tgbotapi.MessageConfig, err error) {
+func (h *AnyHandler) Handle(ctx context.Context, msg *tgbotapi.Message) (reply tgbotapi.Chattable, err error) {
 	if !h.shouldReply(msg) {
 		return reply, nil
 	}
@@ -36,18 +39,28 @@ func (h *AnyHandler) Handle(ctx context.Context, msg *tgbotapi.Message) (reply *
 	}
 	defer h.neuralSema.Release(1)
 
-	reply = lo.ToPtr(tgbotapi.NewMessage(lo.FromPtr(msg.Chat).ID, ""))
 	result, err := h.callOllamaApi(ctx, msg.Text)
 	if err != nil {
 		if errors.Is(err, errNoOllamaResult) {
-			reply.Text = "Я не знаю, что на это ответить."
-			return reply, nil
+			content, err := h.gifProvider.FetchGifById(ctx, tenor.NonCommentGifId)
+			if err != nil {
+				log.Println(err) // todo: zap
+				replyText := tgbotapi.NewMessage(lo.FromPtr(msg.Chat).ID, "")
+				replyText.Text = "Я не знаю, что на это ответить."
+				return replyText, nil
+			}
+			replyAnimation := tgbotapi.NewAnimation(lo.FromPtr(msg.Chat).ID, tgbotapi.FileBytes{
+				Name:  "poshel_naxyi.gif",
+				Bytes: content,
+			})
+			return replyAnimation, nil
 		}
 		return reply, err
 	}
-	reply.Text = result
+	replyText := tgbotapi.NewMessage(lo.FromPtr(msg.Chat).ID, "")
+	replyText.Text = result
 
-	return reply, nil
+	return replyText, nil
 }
 
 func (h *AnyHandler) shouldReply(msg *tgbotapi.Message) bool {
@@ -73,7 +86,7 @@ func (h *AnyHandler) callOllamaApi(ctx context.Context, prompt string) (neuralRe
 	}
 
 	// ретраим пока не получим устраивающий нас ответ
-	const maxRetries = 5
+	const maxRetries = 1
 	if _, err := lo.Attempt(maxRetries, func(index int) error {
 		result, err := h.neuralProvider.Prompt(ctx, req)
 		if err != nil {

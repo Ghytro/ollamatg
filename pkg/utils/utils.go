@@ -6,3 +6,7 @@ func Must(val any, err error) any {
 	}
 	return val
 }
+
+func ReturnFirst[T any](first T, second any) T {
+	return first
+}
